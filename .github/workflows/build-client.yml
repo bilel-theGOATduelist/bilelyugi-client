@@ -1,0 +1,66 @@
+name: Build BilelYugi client
+on: workflow_dispatch
+env:
+  DEPENDENCIES_BASE_URL: https://github.com/edo9300/edopro-vcpkg-cache/releases/latest/download
+jobs:
+  build:
+    runs-on: windows-2022
+    env:
+      TRAVIS_OS_NAME: windows
+      DXSDK_DIR: /c/d3d9sdk/
+      VCPKG_ROOT: /c/vcpkg2
+      VS_GEN: vs2022
+      BUILD_CONFIG: release
+      ARCH: x86
+    steps:
+    - name: Keep line endings as they are (needed for the patch)
+      shell: bash
+      run: git config --global core.autocrlf false
+    - name: Get this kit (the patch)
+      uses: actions/checkout@v4
+      with:
+        path: kit
+    - name: Get the official EDOPro source, version 41.0.2
+      uses: actions/checkout@v4
+      with:
+        repository: edo9300/edopro
+        ref: 41.0.2
+        path: edopro
+        fetch-depth: 1
+    - name: Apply the Bilel&&Yugi patch
+      shell: bash
+      working-directory: edopro
+      run: |
+        git apply --check --ignore-whitespace ../kit/patch/bilelyugi_client_pyramid_phase.diff
+        git apply --ignore-whitespace ../kit/patch/bilelyugi_client_pyramid_phase.diff
+        git diff --stat
+    - name: Choose the dependency package
+      shell: bash
+      run: echo "VCPKG_CACHE_ZIP_URL=$DEPENDENCIES_BASE_URL/installed_x86-windows-static-vs2022.zip" >> $GITHUB_ENV
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v2
+    - name: Install premake
+      shell: bash
+      working-directory: edopro
+      run: ./travis/install-premake5.sh
+    - name: Install dependencies (this takes a while)
+      shell: bash
+      working-directory: edopro
+      run: ./travis/dependencies.sh
+    - name: Build (this takes a while)
+      shell: bash
+      working-directory: edopro
+      run: ./travis/build.sh
+    - name: Show the result
+      shell: bash
+      working-directory: edopro
+      run: |
+        ls -la bin/release/ || ls -laR bin | head -40
+        sha256sum bin/release/ygoprodll.exe || true
+    - name: Keep the client file
+      uses: actions/upload-artifact@v4
+      with:
+        name: BilelYugi-client
+        path: |
+          edopro/bin/**/ygoprodll.exe
+        if-no-files-found: error
