@@ -1,0 +1,143 @@
+diff --git a/gframe/common.h b/gframe/common.h
+index 74630b1..c29f55b 100644
+--- a/gframe/common.h
++++ b/gframe/common.h
+@@ -391,6 +391,7 @@
+ #define PHASE_BATTLE        0x80
+ #define PHASE_MAIN2         0x100
+ #define PHASE_END           0x200
++#define PHASE_PYRAMID       0x400 //BILEL&&YUGI
+ 
+ //Options
+ #define DUEL_TEST_MODE         0x01
+diff --git a/gframe/drawing.cpp b/gframe/drawing.cpp
+index 918406c..dfc43d4 100644
+--- a/gframe/drawing.cpp
++++ b/gframe/drawing.cpp
+@@ -981,6 +981,8 @@ void Game::DrawSpec() {
+ 			irr::core::ustring lstr = L"";
+ 			if(1 <= showcardcode && showcardcode <= 14) {
+ 				lstr = gDataManager->GetSysString(1700 + showcardcode);
++			} else if(showcardcode == 20) { //BILEL&&YUGI: Pyramid Phase banner
++				lstr = L"Pyramid Phase";
+ 			}
+ 			auto pos = lpcFont->getDimensionustring(lstr);
+ 			if(showcardp < 10.0f) {
+diff --git a/gframe/duelclient.cpp b/gframe/duelclient.cpp
+index d8c2414..4b4e8d0 100644
+--- a/gframe/duelclient.cpp
++++ b/gframe/duelclient.cpp
+@@ -961,6 +961,8 @@ void DuelClient::HandleSTOCPacketLanAsync(const std::vector<uint8_t>& data) {
+ 		mainGame->btnDP->setSubElement(false);
+ 		mainGame->btnSP->setVisible(false);
+ 		mainGame->btnSP->setSubElement(false);
++		mainGame->btnPP->setVisible(false);
++		mainGame->btnPP->setSubElement(false);
+ 		mainGame->btnM1->setVisible(false);
+ 		mainGame->btnM1->setSubElement(false);
+ 		mainGame->btnBP->setVisible(false);
+@@ -2960,6 +2962,8 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
+ 		mainGame->btnDP->setSubElement(false);
+ 		mainGame->btnSP->setVisible(false);
+ 		mainGame->btnSP->setSubElement(false);
++		mainGame->btnPP->setVisible(false);
++		mainGame->btnPP->setSubElement(false);
+ 		mainGame->btnM1->setVisible(false);
+ 		mainGame->btnM1->setSubElement(false);
+ 		mainGame->btnBP->setVisible(false);
+@@ -2971,6 +2975,7 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
+ 		if(gGameConfig->alternative_phase_layout) {
+ 			mainGame->btnDP->setVisible(true);
+ 			mainGame->btnSP->setVisible(true);
++			mainGame->btnPP->setVisible(true);
+ 			mainGame->btnM1->setVisible(true);
+ 			mainGame->btnBP->setVisible(true);
+ 			mainGame->btnBP->setPressed(false);
+@@ -2992,6 +2997,12 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
+ 			mainGame->btnDP->setSubElement(true);
+ 			mainGame->showcardcode = 4;
+ 			break;
++		case PHASE_PYRAMID: //BILEL&&YUGI
++			event_string = L"Pyramid Phase";
++			mainGame->btnPP->setVisible(true);
++			mainGame->btnPP->setSubElement(true);
++			mainGame->showcardcode = 20;
++			break;
+ 		case PHASE_STANDBY:
+ 			event_string = gDataManager->GetSysString(21).data();
+ 			mainGame->btnSP->setVisible(true);
+diff --git a/gframe/game.cpp b/gframe/game.cpp
+index 8af0208..a07b310 100644
+--- a/gframe/game.cpp
++++ b/gframe/game.cpp
+@@ -323,6 +323,11 @@ void Game::Initialize() {
+ 	btnSP->setEnabled(false);
+ 	btnSP->setPressed(true);
+ 	btnSP->setVisible(false);
++	//BILEL&&YUGI: Pyramid Phase button (fullwidth "PY")
++	btnPP = AlignElementWithParent(env->addButton(Scale(0, 0, 50, 20), wPhase, -1, L"\xff30\xff39"));
++	btnPP->setEnabled(false);
++	btnPP->setPressed(true);
++	btnPP->setVisible(false);
+ 	btnM1 = AlignElementWithParent(env->addButton(Scale(160, 0, 210, 20), wPhase, -1, L"\xff2d\xff11"));
+ 	btnM1->setEnabled(false);
+ 	btnM1->setPressed(true);
+@@ -3277,6 +3282,7 @@ void Game::SetPhaseButtons(bool visibility) {
+ 	if(visibility) {
+ 		btnDP->setVisible(gGameConfig->alternative_phase_layout || btnDP->isSubElement());
+ 		btnSP->setVisible(gGameConfig->alternative_phase_layout || btnSP->isSubElement());
++		btnPP->setVisible(gGameConfig->alternative_phase_layout || btnPP->isSubElement());
+ 		btnM1->setVisible(gGameConfig->alternative_phase_layout || btnM1->isSubElement());
+ 		btnM2->setVisible(gGameConfig->alternative_phase_layout || btnM2->isSubElement());
+ 		btnBP->setVisible(gGameConfig->alternative_phase_layout || btnBP->isSubElement());
+@@ -3295,6 +3301,7 @@ void Game::SetPhaseButtons(bool visibility) {
+ 	auto UpdatePhaseButtons = [&] {
+ 		if(gGameConfig->alternative_phase_layout) {
+ 			btnDP->setRelativePosition({ 0, 0, 50, 20 });
++			btnPP->setRelativePosition({ 0, 20, 50, 40 });
+ 			btnSP->setRelativePosition({ 0, 40, 50, 60 });
+ 			btnM1->setRelativePosition({ 0, 80, 50, 100 });
+ 			btnBP->setRelativePosition({ 0, 120, 50, 140 });
+@@ -3309,6 +3316,7 @@ void Game::SetPhaseButtons(bool visibility) {
+ 				btnShuffle->setRelativePosition({ 0, 40, 50, 60 });
+ 				btnDP->setRelativePosition({ 0, 40, 50, 60 });
+ 				btnSP->setRelativePosition({ 0, 40, 50, 60 });
++				btnPP->setRelativePosition({ 0, 40, 50, 60 });
+ 				btnM1->setRelativePosition({ 160, 20, 210, 40 });
+ 				btnBP->setRelativePosition({ 160, 20, 210, 40 });
+ 				btnM2->setRelativePosition({ 160, 20, 210, 40 });
+@@ -3318,6 +3326,7 @@ void Game::SetPhaseButtons(bool visibility) {
+ 			btnShuffle->setRelativePosition({ 65, 0, 115, 20 });
+ 			btnDP->setRelativePosition({ 65, 0, 115, 20 });
+ 			btnSP->setRelativePosition({ 65, 0, 115, 20 });
++			btnPP->setRelativePosition({ 65, 0, 115, 20 });
+ 			btnM1->setRelativePosition({ 130, 0, 180, 20 });
+ 			btnBP->setRelativePosition({ 195, 0, 245, 20 });
+ 			btnM2->setRelativePosition({ 195, 0, 245, 20 });
+@@ -3329,12 +3338,14 @@ void Game::SetPhaseButtons(bool visibility) {
+ 		btnShuffle->setRelativePosition({ 0, 0, 50, 20 });
+ 		if(dInfo.HasFieldFlag(DUEL_EMZONE)) {
+ 			btnSP->setRelativePosition({ 0, 0, 50, 20 });
++			btnPP->setRelativePosition({ 0, 0, 50, 20 });
+ 			btnM1->setRelativePosition({ 160, 0, 210, 20 });
+ 			btnBP->setRelativePosition({ 160, 0, 210, 20 });
+ 			btnM2->setRelativePosition({ 160, 0, 210, 20 });
+ 			return;
+ 		}
+ 		btnSP->setRelativePosition({ 65, 0, 115, 20 });
++		btnPP->setRelativePosition({ 65, 0, 115, 20 });
+ 		btnM1->setRelativePosition({ 130, 0, 180, 20 });
+ 		btnBP->setRelativePosition({ 195, 0, 245, 20 });
+ 		btnM2->setRelativePosition({ 260, 0, 310, 20 });
+diff --git a/gframe/game.h b/gframe/game.h
+index eab91f8..6a74f16 100644
+--- a/gframe/game.h
++++ b/gframe/game.h
+@@ -478,6 +478,7 @@ struct game_field_elements {
+ 	irr::gui::IGUIStaticText* wPhase;
+ 	irr::gui::IGUIButton* btnDP;
+ 	irr::gui::IGUIButton* btnSP;
++	irr::gui::IGUIButton* btnPP; //BILEL&&YUGI: Pyramid Phase button
+ 	irr::gui::IGUIButton* btnM1;
+ 	irr::gui::IGUIButton* btnBP;
+ 	irr::gui::IGUIButton* btnM2;
