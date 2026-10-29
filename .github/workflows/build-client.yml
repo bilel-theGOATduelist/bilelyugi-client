@@ -1,7 +1,7 @@
 name: Build BilelYugi client
 on: workflow_dispatch
 env:
-  DEPENDENCIES_BASE_URL: https://github.com/edo9300/edopro-vcpkg-cache/releases/latest/download
+  DEPENDENCIES_BASE_URL: https://github.com/edo9300/edopro-vcpkg-cache/releases/download/20250329
 jobs:
   build:
     runs-on: windows-2022
@@ -41,6 +41,12 @@ jobs:
         sed -i 's/^project "Irrlicht"$/project "Irrlicht"\n\tcppdialect "C++17"/' irrlicht/premake5.lua
         head -4 irrlicht/premake5.lua
         grep -q 'cppdialect "C++17"' irrlicht/premake5.lua
+    - name: Fix fmt::localtime (removed in the newest fmt library)
+      shell: bash
+      working-directory: edopro
+      run: |
+        sed -E -i 's/fmt::localtime\(([A-Za-z_]+)\)/*std::localtime(\&\1)/g' gframe/*.cpp gframe/*.h
+        grep -rn "std::localtime" gframe | cut -c1-120
     - name: Choose the dependency package
       shell: bash
       run: echo "VCPKG_CACHE_ZIP_URL=$DEPENDENCIES_BASE_URL/installed_x86-windows-static-vs2022.zip" >> $GITHUB_ENV
