@@ -34,6 +34,13 @@ jobs:
         git apply --check --ignore-whitespace ../kit/patch/bilelyugi_client_pyramid_phase.diff
         git apply --ignore-whitespace ../kit/patch/bilelyugi_client_pyramid_phase.diff
         git diff --stat
+    - name: Fix Irrlicht C++ standard (the downloaded Irrlicht needs C++17)
+      shell: bash
+      working-directory: edopro
+      run: |
+        sed -i 's/^project "Irrlicht"$/project "Irrlicht"\n\tcppdialect "C++17"/' irrlicht/premake5.lua
+        head -4 irrlicht/premake5.lua
+        grep -q 'cppdialect "C++17"' irrlicht/premake5.lua
     - name: Choose the dependency package
       shell: bash
       run: echo "VCPKG_CACHE_ZIP_URL=$DEPENDENCIES_BASE_URL/installed_x86-windows-static-vs2022.zip" >> $GITHUB_ENV
