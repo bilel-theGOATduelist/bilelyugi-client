@@ -11,10 +11,15 @@ index 74630b1..c29f55b 100644
  //Options
  #define DUEL_TEST_MODE         0x01
 diff --git a/gframe/drawing.cpp b/gframe/drawing.cpp
-index 918406c..0fe579e 100644
+index 918406c..402750f 100644
 --- a/gframe/drawing.cpp
 +++ b/gframe/drawing.cpp
-@@ -641,8 +641,8 @@ void Game::DrawMisc() {
+@@ -1,3 +1,4 @@
++#include <algorithm>
+ #include "game_config.h"
+ #include <irrlicht.h>
+ #include "game.h"
+@@ -641,9 +642,10 @@ void Game::DrawMisc() {
  			DrawStackIndicator(gDataManager->GetNumString(dField.deck[p].size()), matManager.getDeck()[p], (p == 1));
  		if (dField.grave[p].size())
  			DrawStackIndicator(gDataManager->GetNumString(dField.grave[p].size()), matManager.getGrave()[p], (p == 1));
@@ -23,9 +28,11 @@ index 918406c..0fe579e 100644
 +		if (dField.remove[p].size() > static_cast<size_t>(GetPyramidCount(p))) //BILEL&&YUGI: Pyramid cards are not counted as banished
 +			DrawStackIndicator(gDataManager->GetNumString(dField.remove[p].size() - GetPyramidCount(p)), matManager.getRemove()[p], (p == 1));
  	}
++	DrawPyramidZones(); //BILEL&&YUGI
  }
  /*
-@@ -760,6 +760,119 @@ void Game::DrawStackIndicator(epro::wstringview text, const Materials::QuadVerte
+ Draws the stats of a card based on its relative position
+@@ -760,6 +762,128 @@ void Game::DrawStackIndicator(epro::wstringview text, const Materials::QuadVerte
  	DrawShadowText(numFont, utext, irr::core::recti(coords.X - dim.Width, coords.Y - dim.Height, coords.X + dim.Width, coords.Y + dim.Height),
  				   Resize(0, 1, 0, 1), skin::DUELFIELD_STACK_VAL, 0xff000000);
  }
@@ -50,110 +57,119 @@ index 918406c..0fe579e 100644
 +	wPyramid->setVisible(true);
 +	env->setFocus(wPyramid);
 +}
++//BILEL&&YUGI: draws the py zone of each player (called at the end of DrawMisc, so windows are drawn above it)
 +void Game::DrawPyramidZones() {
-+	if(!dInfo.isInDuel || is_building || is_siding) {
-+		for(int p = 0; p < 2; ++p)
-+			btnPyZone[p]->setVisible(false);
-+		wPyramid->setVisible(false);
++	if(!dInfo.isInDuel || is_building || is_siding)
 +		return;
-+	}
-+	const auto screen = driver->getScreenSize();
 +	auto* coll = device->getSceneManager()->getSceneCollisionManager();
 +	for(int p = 0; p < 2; ++p) {
 +		//the py zone is the Main Deck zone shifted one zone outwards (to the right of the Main Deck, as in the draft)
 +		const auto& deck = matManager.getDeck()[p];
 +		const float center = (deck[0].Pos.X + deck[1].Pos.X) / 2.0f;
 +		const float dx = (center > 4.0f) ? 1.0f : -1.0f;
-+		irr::s32 minx = 100000, miny = 100000, maxx = -100000, maxy = -100000;
-+		for(int i = 0; i < 4; ++i) {
-+			const auto pos = coll->getScreenCoordinatesFrom3DPosition({ deck[i].Pos.X + dx, deck[i].Pos.Y, 0.0f });
-+			minx = std::min(minx, pos.X);
-+			maxx = std::max(maxx, pos.X);
-+			miny = std::min(miny, pos.Y);
-+			maxy = std::max(maxy, pos.Y);
-+		}
-+		irr::core::recti rect(minx, miny, maxx, maxy);
-+		//keep the zone inside the screen
-+		if(rect.LowerRightCorner.X > static_cast<irr::s32>(screen.Width) - 2) {
-+			const auto shift = rect.LowerRightCorner.X - (static_cast<irr::s32>(screen.Width) - 2);
-+			rect.UpperLeftCorner.X -= shift;
-+			rect.LowerRightCorner.X -= shift;
-+		}
-+		if(rect.UpperLeftCorner.X < 2) {
-+			const auto shift = 2 - rect.UpperLeftCorner.X;
-+			rect.UpperLeftCorner.X += shift;
-+			rect.LowerRightCorner.X += shift;
-+		}
++		irr::core::vector2di pt[4];
++		for(int i = 0; i < 4; ++i)
++			pt[i] = coll->getScreenCoordinatesFrom3DPosition({ deck[i].Pos.X + dx, deck[i].Pos.Y, 0.0f });
++		//sort the corners on the screen: top-left, top-right, bottom-left, bottom-right
++		int order[4] = { 0, 1, 2, 3 };
++		std::sort(order, order + 4, [&](int l, int r) { return pt[l].Y < pt[r].Y; });
++		irr::core::vector2di tl = pt[order[0]], tr = pt[order[1]], bl = pt[order[2]], br = pt[order[3]];
++		if(tl.X > tr.X)
++			std::swap(tl, tr);
++		if(bl.X > br.X)
++			std::swap(bl, br);
++		auto lerp = [](const irr::core::vector2di& a, const irr::core::vector2di& b, float t) {
++			return irr::core::vector2di(static_cast<irr::s32>(a.X + (b.X - a.X) * t), static_cast<irr::s32>(a.Y + (b.Y - a.Y) * t));
++		};
++		auto at = [&](float u, float v) {
++			return lerp(lerp(tl, tr, u), lerp(bl, br, u), v);
++		};
++		//clickable area = inner part of the zone
++		const auto c1 = at(0.15f, 0.15f), c2 = at(0.85f, 0.15f), c3 = at(0.15f, 0.85f), c4 = at(0.85f, 0.85f);
++		irr::core::recti rect(std::min({ c1.X, c2.X, c3.X, c4.X }), std::min({ c1.Y, c2.Y, c3.Y, c4.Y }),
++							  std::max({ c1.X, c2.X, c3.X, c4.X }), std::max({ c1.Y, c2.Y, c3.Y, c4.Y }));
 +		btnPyZone[p]->setRelativePosition(rect);
 +		btnPyZone[p]->setVisible(true);
-+		const int n = GetPyramidCount(p);
-+		const int layers = PyramidLayers(n);
-+		driver->draw2DRectangle(irr::video::SColor(120, 40, 30, 80), rect);
-+		driver->draw2DRectangleOutline(rect, irr::video::SColor(255, 230, 190, 60));
++		//background of the zone (filled with lines, exactly the shape of the zone)
++		const irr::video::SColor fill(255, 34, 28, 72), gold(255, 255, 215, 90);
++		const int steps = std::max({ 2, static_cast<int>((tr - tl).getLength()), static_cast<int>((br - bl).getLength()) });
++		for(int i = 0; i <= steps; ++i) {
++			const float t = static_cast<float>(i) / steps;
++			driver->draw2DLine(lerp(tl, tr, t), lerp(bl, br, t), fill);
++		}
++		driver->draw2DLine(tl, tr, gold);
++		driver->draw2DLine(tr, br, gold);
++		driver->draw2DLine(br, bl, gold);
++		driver->draw2DLine(bl, tl, gold);
 +		//small pyramid icon
-+		const irr::s32 w = rect.getWidth(), h = rect.getHeight();
-+		const irr::core::vector2di apex(rect.UpperLeftCorner.X + w / 2, rect.UpperLeftCorner.Y + h / 8);
-+		const irr::core::vector2di left(rect.UpperLeftCorner.X + w / 6, rect.UpperLeftCorner.Y + h / 2);
-+		const irr::core::vector2di right(rect.LowerRightCorner.X - w / 6, rect.UpperLeftCorner.Y + h / 2);
-+		const irr::video::SColor gold(255, 255, 215, 90);
-+		driver->draw2DLine(apex, left, gold);
-+		driver->draw2DLine(apex, right, gold);
-+		driver->draw2DLine(left, right, gold);
-+		const irr::s32 midy = rect.UpperLeftCorner.Y + (h * 5) / 16;
-+		driver->draw2DLine(irr::core::vector2di(rect.UpperLeftCorner.X + (w * 5) / 12, midy), irr::core::vector2di(rect.LowerRightCorner.X - (w * 5) / 12, midy), gold);
-+		const auto layerstr = epro::format(L"{}", layers);
++		driver->draw2DLine(at(0.5f, 0.1f), at(0.15f, 0.55f), gold);
++		driver->draw2DLine(at(0.5f, 0.1f), at(0.85f, 0.55f), gold);
++		driver->draw2DLine(at(0.15f, 0.55f), at(0.85f, 0.55f), gold);
++		driver->draw2DLine(at(0.33f, 0.33f), at(0.67f, 0.33f), gold);
++		const auto tc = at(0.5f, 0.78f);
++		const auto layerstr = epro::format(L"{}", PyramidLayers(GetPyramidCount(p)));
 +		const irr::core::ustring utext{ epro::wstringview(layerstr) };
-+		DrawShadowText(numFont, utext, irr::core::recti(rect.UpperLeftCorner.X, rect.UpperLeftCorner.Y + h / 2, rect.LowerRightCorner.X, rect.LowerRightCorner.Y),
++		DrawShadowText(numFont, utext, irr::core::recti(tc.X - 30, tc.Y - 12, tc.X + 30, tc.Y + 12),
 +					   Resize(0, 1, 0, 1), 0xffffffff, 0xff000000, true, true);
 +	}
-+	//window with the layers
-+	if(wPyramid->isVisible()) {
-+		const int p = pyramidView;
-+		const int n = GetPyramidCount(p);
-+		const int layers = PyramidLayers(n);
-+		auto win = wPyramid->getAbsolutePosition();
-+		const irr::core::recti area(win.UpperLeftCorner.X + 20, win.UpperLeftCorner.Y + 40, win.LowerRightCorner.X - 20, win.LowerRightCorner.Y - 50);
-+		if(layers == 0) {
-+			DrawShadowText(textFont, irr::core::ustring{ epro::wstringview(L"No card in this Pyramid") }, area, Resize(0, 1, 0, 1), 0xffffffff, 0xff000000, true, true);
-+			return;
-+		}
-+		float cellH = static_cast<float>(area.getHeight()) / layers;
-+		const float maxH = static_cast<float>(area.getWidth()) / layers / 0.72f;
-+		if(maxH < cellH)
-+			cellH = maxH;
-+		if(cellH > 140.0f)
-+			cellH = 140.0f;
-+		const float cellW = cellH * 0.72f;
-+		const float top = area.UpperLeftCorner.Y + (area.getHeight() - cellH * layers) / 2.0f;
-+		const float cx = (area.UpperLeftCorner.X + area.LowerRightCorner.X) / 2.0f;
-+		auto* cover = imageManager.tCover[p == 0 ? 0 : 1];
-+		const irr::core::recti src(irr::core::vector2di(0, 0), irr::core::dimension2di(cover->getOriginalSize()));
-+		int index = 0;
-+		for(int layer = 1; layer <= layers; ++layer) {
-+			const float left = cx - (cellW * layer) / 2.0f;
-+			for(int k = 0; k < layer; ++k, ++index) {
-+				const irr::core::recti dest(static_cast<irr::s32>(left + k * cellW + 2), static_cast<irr::s32>(top + (layer - 1) * cellH + 2),
-+											static_cast<irr::s32>(left + (k + 1) * cellW - 2), static_cast<irr::s32>(top + layer * cellH - 2));
-+				if(index < n)
-+					driver->draw2DImage(cover, dest, src, nullptr, nullptr, true);
-+				else
-+					driver->draw2DRectangleOutline(dest, irr::video::SColor(255, 150, 150, 150));
-+			}
++}
++//BILEL&&YUGI: window with the Pyramid layers (called from DrawSpec, after the GUI)
++void Game::DrawPyramidWindow() {
++	if(!dInfo.isInDuel || is_building || is_siding) {
++		for(int p = 0; p < 2; ++p)
++			btnPyZone[p]->setVisible(false);
++		wPyramid->setVisible(false);
++		return;
++	}
++	if(!wPyramid->isVisible())
++		return;
++	const int p = pyramidView;
++	const int n = GetPyramidCount(p);
++	const int layers = PyramidLayers(n);
++	auto win = wPyramid->getAbsolutePosition();
++	//opaque background behind the cards (the Close button stays visible below)
++	driver->draw2DRectangle(irr::video::SColor(255, 24, 20, 50), irr::core::recti(win.UpperLeftCorner.X + 4, win.UpperLeftCorner.Y + 26, win.LowerRightCorner.X - 4, win.LowerRightCorner.Y - 48));
++	const irr::core::recti area(win.UpperLeftCorner.X + 20, win.UpperLeftCorner.Y + 40, win.LowerRightCorner.X - 20, win.LowerRightCorner.Y - 50);
++	if(layers == 0) {
++		DrawShadowText(textFont, irr::core::ustring{ epro::wstringview(L"No card in this Pyramid") }, area, Resize(0, 1, 0, 1), 0xffffffff, 0xff000000, true, true);
++		return;
++	}
++	float cellH = static_cast<float>(area.getHeight()) / layers;
++	const float maxH = static_cast<float>(area.getWidth()) / layers / 0.72f;
++	if(maxH < cellH)
++		cellH = maxH;
++	if(cellH > 140.0f)
++		cellH = 140.0f;
++	const float cellW = cellH * 0.72f;
++	const float top = area.UpperLeftCorner.Y + (area.getHeight() - cellH * layers) / 2.0f;
++	const float cx = (area.UpperLeftCorner.X + area.LowerRightCorner.X) / 2.0f;
++	auto* cover = imageManager.tCover[p == 0 ? 0 : 1];
++	const irr::core::recti src(irr::core::vector2di(0, 0), irr::core::dimension2di(cover->getOriginalSize()));
++	int index = 0;
++	for(int layer = 1; layer <= layers; ++layer) {
++		const float left = cx - (cellW * layer) / 2.0f;
++		for(int k = 0; k < layer; ++k, ++index) {
++			const irr::core::recti dest(static_cast<irr::s32>(left + k * cellW + 2), static_cast<irr::s32>(top + (layer - 1) * cellH + 2),
++										static_cast<irr::s32>(left + (k + 1) * cellW - 2), static_cast<irr::s32>(top + layer * cellH - 2));
++			if(index < n)
++				driver->draw2DImage(cover, dest, src, nullptr, nullptr, true);
++			else
++				driver->draw2DRectangleOutline(dest, irr::video::SColor(255, 150, 150, 150));
 +		}
 +	}
 +}
  void Game::DrawGUI() {
  	if(imageLoading.size()) {
  		for(auto mit = imageLoading.begin(); mit != imageLoading.end();) {
-@@ -869,6 +982,7 @@ void Game::DrawGUI() {
+@@ -869,6 +993,7 @@ void Game::DrawGUI() {
  	env->drawAll();
  }
  void Game::DrawSpec() {
-+	DrawPyramidZones(); //BILEL&&YUGI
++	DrawPyramidWindow(); //BILEL&&YUGI
  	const auto drawrect2 = ResizeWin(574, 150, 574 + CARD_IMG_WIDTH, 150 + CARD_IMG_HEIGHT);
  	if(showcard) {
  		switch(showcard) {
-@@ -981,6 +1095,8 @@ void Game::DrawSpec() {
+@@ -981,6 +1106,8 @@ void Game::DrawSpec() {
  			irr::core::ustring lstr = L"";
  			if(1 <= showcardcode && showcardcode <= 14) {
  				lstr = gDataManager->GetSysString(1700 + showcardcode);
@@ -307,7 +323,7 @@ index 8af0208..f3d3537 100644
  		btnBP->setRelativePosition({ 195, 0, 245, 20 });
  		btnM2->setRelativePosition({ 260, 0, 310, 20 });
 diff --git a/gframe/game.h b/gframe/game.h
-index eab91f8..034a50e 100644
+index eab91f8..c2ad92b 100644
 --- a/gframe/game.h
 +++ b/gframe/game.h
 @@ -478,6 +478,11 @@ struct game_field_elements {
@@ -322,12 +338,13 @@ index eab91f8..034a50e 100644
  	irr::gui::IGUIButton* btnM1;
  	irr::gui::IGUIButton* btnBP;
  	irr::gui::IGUIButton* btnM2;
-@@ -532,6 +537,9 @@ public:
+@@ -532,6 +537,10 @@ public:
  	void DrawStatus(ClientCard* pcard);
  	void DrawPendScale(ClientCard* pcard);
  	void DrawStackIndicator(epro::wstringview text, const Materials::QuadVertex v, bool opponent);
 +	int GetPyramidCount(int p); //BILEL&&YUGI
 +	void DrawPyramidZones(); //BILEL&&YUGI
++	void DrawPyramidWindow(); //BILEL&&YUGI
 +	void OpenPyramidWindow(int p); //BILEL&&YUGI
  	void DrawGUI();
  	void DrawSpec();
