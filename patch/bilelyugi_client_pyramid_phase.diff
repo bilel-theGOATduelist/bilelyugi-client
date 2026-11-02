@@ -11,10 +11,149 @@ index 74630b1..c29f55b 100644
  //Options
  #define DUEL_TEST_MODE         0x01
 diff --git a/gframe/drawing.cpp b/gframe/drawing.cpp
-index 918406c..dfc43d4 100644
+index 918406c..0fe579e 100644
 --- a/gframe/drawing.cpp
 +++ b/gframe/drawing.cpp
-@@ -981,6 +981,8 @@ void Game::DrawSpec() {
+@@ -641,8 +641,8 @@ void Game::DrawMisc() {
+ 			DrawStackIndicator(gDataManager->GetNumString(dField.deck[p].size()), matManager.getDeck()[p], (p == 1));
+ 		if (dField.grave[p].size())
+ 			DrawStackIndicator(gDataManager->GetNumString(dField.grave[p].size()), matManager.getGrave()[p], (p == 1));
+-		if (dField.remove[p].size())
+-			DrawStackIndicator(gDataManager->GetNumString(dField.remove[p].size()), matManager.getRemove()[p], (p == 1));
++		if (dField.remove[p].size() > static_cast<size_t>(GetPyramidCount(p))) //BILEL&&YUGI: Pyramid cards are not counted as banished
++			DrawStackIndicator(gDataManager->GetNumString(dField.remove[p].size() - GetPyramidCount(p)), matManager.getRemove()[p], (p == 1));
+ 	}
+ }
+ /*
+@@ -760,6 +760,119 @@ void Game::DrawStackIndicator(epro::wstringview text, const Materials::QuadVerte
+ 	DrawShadowText(numFont, utext, irr::core::recti(coords.X - dim.Width, coords.Y - dim.Height, coords.X + dim.Width, coords.Y + dim.Height),
+ 				   Resize(0, 1, 0, 1), skin::DUELFIELD_STACK_VAL, 0xff000000);
+ }
++//BILEL&&YUGI: Pyramid zone. The Pyramid cards are the face-down banished cards whose code is hidden (0).
++int Game::GetPyramidCount(int p) {
++	int n = 0;
++	for(auto* pcard : dField.remove[p]) {
++		if(pcard && pcard->code == 0 && (pcard->position & POS_FACEDOWN))
++			++n;
++	}
++	return n;
++}
++static int PyramidLayers(int n) {
++	int layers = 0;
++	while(layers * (layers + 1) / 2 < n)
++		++layers;
++	return layers;
++}
++void Game::OpenPyramidWindow(int p) {
++	pyramidView = p;
++	wPyramid->setText(p == 0 ? L"Pyramid (yours) - cards stay face-down" : L"Pyramid (opponent) - cards stay face-down");
++	wPyramid->setVisible(true);
++	env->setFocus(wPyramid);
++}
++void Game::DrawPyramidZones() {
++	if(!dInfo.isInDuel || is_building || is_siding) {
++		for(int p = 0; p < 2; ++p)
++			btnPyZone[p]->setVisible(false);
++		wPyramid->setVisible(false);
++		return;
++	}
++	const auto screen = driver->getScreenSize();
++	auto* coll = device->getSceneManager()->getSceneCollisionManager();
++	for(int p = 0; p < 2; ++p) {
++		//the py zone is the Main Deck zone shifted one zone outwards (to the right of the Main Deck, as in the draft)
++		const auto& deck = matManager.getDeck()[p];
++		const float center = (deck[0].Pos.X + deck[1].Pos.X) / 2.0f;
++		const float dx = (center > 4.0f) ? 1.0f : -1.0f;
++		irr::s32 minx = 100000, miny = 100000, maxx = -100000, maxy = -100000;
++		for(int i = 0; i < 4; ++i) {
++			const auto pos = coll->getScreenCoordinatesFrom3DPosition({ deck[i].Pos.X + dx, deck[i].Pos.Y, 0.0f });
++			minx = std::min(minx, pos.X);
++			maxx = std::max(maxx, pos.X);
++			miny = std::min(miny, pos.Y);
++			maxy = std::max(maxy, pos.Y);
++		}
++		irr::core::recti rect(minx, miny, maxx, maxy);
++		//keep the zone inside the screen
++		if(rect.LowerRightCorner.X > static_cast<irr::s32>(screen.Width) - 2) {
++			const auto shift = rect.LowerRightCorner.X - (static_cast<irr::s32>(screen.Width) - 2);
++			rect.UpperLeftCorner.X -= shift;
++			rect.LowerRightCorner.X -= shift;
++		}
++		if(rect.UpperLeftCorner.X < 2) {
++			const auto shift = 2 - rect.UpperLeftCorner.X;
++			rect.UpperLeftCorner.X += shift;
++			rect.LowerRightCorner.X += shift;
++		}
++		btnPyZone[p]->setRelativePosition(rect);
++		btnPyZone[p]->setVisible(true);
++		const int n = GetPyramidCount(p);
++		const int layers = PyramidLayers(n);
++		driver->draw2DRectangle(irr::video::SColor(120, 40, 30, 80), rect);
++		driver->draw2DRectangleOutline(rect, irr::video::SColor(255, 230, 190, 60));
++		//small pyramid icon
++		const irr::s32 w = rect.getWidth(), h = rect.getHeight();
++		const irr::core::vector2di apex(rect.UpperLeftCorner.X + w / 2, rect.UpperLeftCorner.Y + h / 8);
++		const irr::core::vector2di left(rect.UpperLeftCorner.X + w / 6, rect.UpperLeftCorner.Y + h / 2);
++		const irr::core::vector2di right(rect.LowerRightCorner.X - w / 6, rect.UpperLeftCorner.Y + h / 2);
++		const irr::video::SColor gold(255, 255, 215, 90);
++		driver->draw2DLine(apex, left, gold);
++		driver->draw2DLine(apex, right, gold);
++		driver->draw2DLine(left, right, gold);
++		const irr::s32 midy = rect.UpperLeftCorner.Y + (h * 5) / 16;
++		driver->draw2DLine(irr::core::vector2di(rect.UpperLeftCorner.X + (w * 5) / 12, midy), irr::core::vector2di(rect.LowerRightCorner.X - (w * 5) / 12, midy), gold);
++		const auto layerstr = epro::format(L"{}", layers);
++		const irr::core::ustring utext{ epro::wstringview(layerstr) };
++		DrawShadowText(numFont, utext, irr::core::recti(rect.UpperLeftCorner.X, rect.UpperLeftCorner.Y + h / 2, rect.LowerRightCorner.X, rect.LowerRightCorner.Y),
++					   Resize(0, 1, 0, 1), 0xffffffff, 0xff000000, true, true);
++	}
++	//window with the layers
++	if(wPyramid->isVisible()) {
++		const int p = pyramidView;
++		const int n = GetPyramidCount(p);
++		const int layers = PyramidLayers(n);
++		auto win = wPyramid->getAbsolutePosition();
++		const irr::core::recti area(win.UpperLeftCorner.X + 20, win.UpperLeftCorner.Y + 40, win.LowerRightCorner.X - 20, win.LowerRightCorner.Y - 50);
++		if(layers == 0) {
++			DrawShadowText(textFont, irr::core::ustring{ epro::wstringview(L"No card in this Pyramid") }, area, Resize(0, 1, 0, 1), 0xffffffff, 0xff000000, true, true);
++			return;
++		}
++		float cellH = static_cast<float>(area.getHeight()) / layers;
++		const float maxH = static_cast<float>(area.getWidth()) / layers / 0.72f;
++		if(maxH < cellH)
++			cellH = maxH;
++		if(cellH > 140.0f)
++			cellH = 140.0f;
++		const float cellW = cellH * 0.72f;
++		const float top = area.UpperLeftCorner.Y + (area.getHeight() - cellH * layers) / 2.0f;
++		const float cx = (area.UpperLeftCorner.X + area.LowerRightCorner.X) / 2.0f;
++		auto* cover = imageManager.tCover[p == 0 ? 0 : 1];
++		const irr::core::recti src(irr::core::vector2di(0, 0), irr::core::dimension2di(cover->getOriginalSize()));
++		int index = 0;
++		for(int layer = 1; layer <= layers; ++layer) {
++			const float left = cx - (cellW * layer) / 2.0f;
++			for(int k = 0; k < layer; ++k, ++index) {
++				const irr::core::recti dest(static_cast<irr::s32>(left + k * cellW + 2), static_cast<irr::s32>(top + (layer - 1) * cellH + 2),
++											static_cast<irr::s32>(left + (k + 1) * cellW - 2), static_cast<irr::s32>(top + layer * cellH - 2));
++				if(index < n)
++					driver->draw2DImage(cover, dest, src, nullptr, nullptr, true);
++				else
++					driver->draw2DRectangleOutline(dest, irr::video::SColor(255, 150, 150, 150));
++			}
++		}
++	}
++}
+ void Game::DrawGUI() {
+ 	if(imageLoading.size()) {
+ 		for(auto mit = imageLoading.begin(); mit != imageLoading.end();) {
+@@ -869,6 +982,7 @@ void Game::DrawGUI() {
+ 	env->drawAll();
+ }
+ void Game::DrawSpec() {
++	DrawPyramidZones(); //BILEL&&YUGI
+ 	const auto drawrect2 = ResizeWin(574, 150, 574 + CARD_IMG_WIDTH, 150 + CARD_IMG_HEIGHT);
+ 	if(showcard) {
+ 		switch(showcard) {
+@@ -981,6 +1095,8 @@ void Game::DrawSpec() {
  			irr::core::ustring lstr = L"";
  			if(1 <= showcardcode && showcardcode <= 14) {
  				lstr = gDataManager->GetSysString(1700 + showcardcode);
@@ -66,8 +205,28 @@ index d8c2414..4b4e8d0 100644
  		case PHASE_STANDBY:
  			event_string = gDataManager->GetSysString(21).data();
  			mainGame->btnSP->setVisible(true);
+diff --git a/gframe/event_handler.cpp b/gframe/event_handler.cpp
+index fcfaec0..e1b68b2 100644
+--- a/gframe/event_handler.cpp
++++ b/gframe/event_handler.cpp
+@@ -67,6 +67,15 @@ bool ClientField::OnEvent(const irr::SEvent& event) {
+ 		int id = event.GUIEvent.Caller->getID();
+ 		switch(event.GUIEvent.EventType) {
+ 		case irr::gui::EGET_BUTTON_CLICKED: {
++			//BILEL&&YUGI: py zone and Pyramid window buttons
++			if(event.GUIEvent.Caller == mainGame->btnPyZone[0] || event.GUIEvent.Caller == mainGame->btnPyZone[1]) {
++				mainGame->OpenPyramidWindow(event.GUIEvent.Caller == mainGame->btnPyZone[0] ? 0 : 1);
++				return true;
++			}
++			if(event.GUIEvent.Caller == mainGame->btnPyClose) {
++				mainGame->wPyramid->setVisible(false);
++				return true;
++			}
+ 			switch(id) {
+ 			case BUTTON_HAND1:
+ 			case BUTTON_HAND2:
 diff --git a/gframe/game.cpp b/gframe/game.cpp
-index 8af0208..a07b310 100644
+index 8af0208..f3d3537 100644
 --- a/gframe/game.cpp
 +++ b/gframe/game.cpp
 @@ -323,6 +323,11 @@ void Game::Initialize() {
@@ -82,7 +241,25 @@ index 8af0208..a07b310 100644
  	btnM1 = AlignElementWithParent(env->addButton(Scale(160, 0, 210, 20), wPhase, -1, L"\xff2d\xff11"));
  	btnM1->setEnabled(false);
  	btnM1->setPressed(true);
-@@ -3277,6 +3282,7 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -442,6 +447,17 @@ void Game::Initialize() {
+ 	btnPSDD->setImage(imageManager.tCover[0]);
+ 	//card select
+ 	imgsize = { Scale<irr::s32>(CARD_IMG_WIDTH * 0.6f), Scale<irr::s32>(CARD_IMG_HEIGHT * 0.6f) };
++	//BILEL&&YUGI: py zone buttons (invisible, drawn by DrawPyramidZones) and Pyramid window
++	for(int i = 0; i < 2; ++i) {
++		btnPyZone[i] = env->addButton(irr::core::recti(0, 0, 10, 10), nullptr, -1, L"");
++		btnPyZone[i]->setDrawBorder(false);
++		btnPyZone[i]->setVisible(false);
++	}
++	pyramidView = 0;
++	wPyramid = env->addWindow(Scale(340, 60, 1000, 580), false, L"Pyramid");
++	wPyramid->getCloseButton()->setVisible(false);
++	wPyramid->setVisible(false);
++	btnPyClose = env->addButton(Scale(280, 480, 380, 510), wPyramid, -1, L"Close");
+ 	wCardSelect = env->addWindow(Scale(320, 100, 1000, 400), false, L"");
+ 	wCardSelect->getCloseButton()->setVisible(false);
+ 	wCardSelect->setVisible(false);
+@@ -3277,6 +3293,7 @@ void Game::SetPhaseButtons(bool visibility) {
  	if(visibility) {
  		btnDP->setVisible(gGameConfig->alternative_phase_layout || btnDP->isSubElement());
  		btnSP->setVisible(gGameConfig->alternative_phase_layout || btnSP->isSubElement());
@@ -90,7 +267,7 @@ index 8af0208..a07b310 100644
  		btnM1->setVisible(gGameConfig->alternative_phase_layout || btnM1->isSubElement());
  		btnM2->setVisible(gGameConfig->alternative_phase_layout || btnM2->isSubElement());
  		btnBP->setVisible(gGameConfig->alternative_phase_layout || btnBP->isSubElement());
-@@ -3295,6 +3301,7 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -3295,6 +3312,7 @@ void Game::SetPhaseButtons(bool visibility) {
  	auto UpdatePhaseButtons = [&] {
  		if(gGameConfig->alternative_phase_layout) {
  			btnDP->setRelativePosition({ 0, 0, 50, 20 });
@@ -98,7 +275,7 @@ index 8af0208..a07b310 100644
  			btnSP->setRelativePosition({ 0, 40, 50, 60 });
  			btnM1->setRelativePosition({ 0, 80, 50, 100 });
  			btnBP->setRelativePosition({ 0, 120, 50, 140 });
-@@ -3309,6 +3316,7 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -3309,6 +3327,7 @@ void Game::SetPhaseButtons(bool visibility) {
  				btnShuffle->setRelativePosition({ 0, 40, 50, 60 });
  				btnDP->setRelativePosition({ 0, 40, 50, 60 });
  				btnSP->setRelativePosition({ 0, 40, 50, 60 });
@@ -106,7 +283,7 @@ index 8af0208..a07b310 100644
  				btnM1->setRelativePosition({ 160, 20, 210, 40 });
  				btnBP->setRelativePosition({ 160, 20, 210, 40 });
  				btnM2->setRelativePosition({ 160, 20, 210, 40 });
-@@ -3318,6 +3326,7 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -3318,6 +3337,7 @@ void Game::SetPhaseButtons(bool visibility) {
  			btnShuffle->setRelativePosition({ 65, 0, 115, 20 });
  			btnDP->setRelativePosition({ 65, 0, 115, 20 });
  			btnSP->setRelativePosition({ 65, 0, 115, 20 });
@@ -114,7 +291,7 @@ index 8af0208..a07b310 100644
  			btnM1->setRelativePosition({ 130, 0, 180, 20 });
  			btnBP->setRelativePosition({ 195, 0, 245, 20 });
  			btnM2->setRelativePosition({ 195, 0, 245, 20 });
-@@ -3329,12 +3338,14 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -3329,12 +3349,14 @@ void Game::SetPhaseButtons(bool visibility) {
  		btnShuffle->setRelativePosition({ 0, 0, 50, 20 });
  		if(dInfo.HasFieldFlag(DUEL_EMZONE)) {
  			btnSP->setRelativePosition({ 0, 0, 50, 20 });
@@ -130,14 +307,28 @@ index 8af0208..a07b310 100644
  		btnBP->setRelativePosition({ 195, 0, 245, 20 });
  		btnM2->setRelativePosition({ 260, 0, 310, 20 });
 diff --git a/gframe/game.h b/gframe/game.h
-index eab91f8..6a74f16 100644
+index eab91f8..034a50e 100644
 --- a/gframe/game.h
 +++ b/gframe/game.h
-@@ -478,6 +478,7 @@ struct game_field_elements {
+@@ -478,6 +478,11 @@ struct game_field_elements {
  	irr::gui::IGUIStaticText* wPhase;
  	irr::gui::IGUIButton* btnDP;
  	irr::gui::IGUIButton* btnSP;
 +	irr::gui::IGUIButton* btnPP; //BILEL&&YUGI: Pyramid Phase button
++	irr::gui::IGUIButton* btnPyZone[2]; //BILEL&&YUGI: clickable py zone of each player (0 = local player)
++	irr::gui::IGUIWindow* wPyramid; //BILEL&&YUGI: window showing the Pyramid layers
++	irr::gui::IGUIButton* btnPyClose;
++	int pyramidView; //BILEL&&YUGI: player whose Pyramid is shown in wPyramid
  	irr::gui::IGUIButton* btnM1;
  	irr::gui::IGUIButton* btnBP;
  	irr::gui::IGUIButton* btnM2;
+@@ -532,6 +537,9 @@ public:
+ 	void DrawStatus(ClientCard* pcard);
+ 	void DrawPendScale(ClientCard* pcard);
+ 	void DrawStackIndicator(epro::wstringview text, const Materials::QuadVertex v, bool opponent);
++	int GetPyramidCount(int p); //BILEL&&YUGI
++	void DrawPyramidZones(); //BILEL&&YUGI
++	void OpenPyramidWindow(int p); //BILEL&&YUGI
+ 	void DrawGUI();
+ 	void DrawSpec();
+ 	void DrawBackImage(irr::video::ITexture* texture, bool resized);
