@@ -19,6 +19,22 @@ index 63ee19d..68254e2 100644
  	uint32_t code;
  	uint32_t chain_code;
  	uint32_t alias;
+diff --git a/gframe/client_field.cpp b/gframe/client_field.cpp
+index e876bf9..c651a8e 100644
+--- a/gframe/client_field.cpp
++++ b/gframe/client_field.cpp
+@@ -864,6 +864,11 @@ void ClientField::GetCardDrawCoordinates(ClientCard* pcard, irr::core::vector3df
+ 				break;
+ 			}
+ 		}
++		//BILEL&&YUGI: a Pyramid card (hidden banished card) lives in the py zone, so it flies there from the Main Deck and leaves from there
++		if(location == LOCATION_REMOVED && pcard->IsPyramidHidden() && controler <= 1) {
++			mainGame->GetPyramidZoneCenter(controler, t->X, t->Y);
++			t->Z = 0.02f;
++		}
+ 	} else {
+ 		auto ShouldCardShow = [pcard] {
+ 			return pcard->code && (!mainGame->dInfo.isReplay || !gGameConfig->hideHandsInReplays || pcard->is_public || pcard->is_hovered);
 diff --git a/gframe/common.h b/gframe/common.h
 index 74630b1..c29f55b 100644
 --- a/gframe/common.h
@@ -32,7 +48,7 @@ index 74630b1..c29f55b 100644
  //Options
  #define DUEL_TEST_MODE         0x01
 diff --git a/gframe/drawing.cpp b/gframe/drawing.cpp
-index 918406c..3766718 100644
+index 918406c..d4a3ffe 100644
 --- a/gframe/drawing.cpp
 +++ b/gframe/drawing.cpp
 @@ -1,3 +1,5 @@
@@ -48,7 +64,7 @@ index 918406c..3766718 100644
 -		for(auto& pcard : dField.remove[p])
 -			DrawCard(pcard);
 +		for(auto& pcard : dField.remove[p]) {
-+			if(!pcard->IsPyramidHidden()) //BILEL&&YUGI: Pyramid cards are not drawn in the banished zone
++			if(!pcard->IsPyramidHidden() || pcard->is_moving) //BILEL&&YUGI: Pyramid cards are drawn only while they fly (deck -> py zone, py zone -> hand)
 +				DrawCard(pcard);
 +		}
  		for(auto& pcard : dField.extra[p])
@@ -67,7 +83,7 @@ index 918406c..3766718 100644
  }
  /*
  Draws the stats of a card based on its relative position
-@@ -760,6 +765,157 @@ void Game::DrawStackIndicator(epro::wstringview text, const Materials::QuadVerte
+@@ -760,6 +765,185 @@ void Game::DrawStackIndicator(epro::wstringview text, const Materials::QuadVerte
  	DrawShadowText(numFont, utext, irr::core::recti(coords.X - dim.Width, coords.Y - dim.Height, coords.X + dim.Width, coords.Y + dim.Height),
  				   Resize(0, 1, 0, 1), skin::DUELFIELD_STACK_VAL, 0xff000000);
  }
@@ -92,23 +108,28 @@ index 918406c..3766718 100644
 +	wPyramid->setVisible(true);
 +	env->setFocus(wPyramid);
 +}
++//BILEL&&YUGI: 3D centre of the py zone of player p (also the target of the card flight deck -> py zone).
++//The zone is small and sits just outside the Graveyard/Main Deck column, at the height between the Graveyard and the Main Deck.
++void Game::GetPyramidZoneCenter(int p, float& cx, float& cy) {
++	const auto& deck = matManager.getDeck()[p];
++	const auto& grave = matManager.getGrave()[p];
++	const float cx_deck = (deck[0].Pos.X + deck[1].Pos.X) / 2.0f;
++	const float cy_deck = (deck[0].Pos.Y + deck[2].Pos.Y) / 2.0f;
++	const float cy_grave = (grave[0].Pos.Y + grave[2].Pos.Y) / 2.0f;
++	const float dir = (cx_deck > 4.0f) ? 1.0f : -1.0f;
++	cx = cx_deck + dir * 0.62f;
++	cy = (cy_deck + cy_grave) / 2.0f;
++}
 +//BILEL&&YUGI: draws the py zone of each player (called at the end of DrawMisc, so windows are drawn above it)
-+//The py zone sits between the Graveyard and the Main Deck, one column outwards, smaller than a normal zone (as in the draft).
 +void Game::DrawPyramidZones() {
 +	if(!dInfo.isInDuel || is_building || is_siding)
 +		return;
 +	auto* coll = device->getSceneManager()->getSceneCollisionManager();
-+	const float pulse = 0.5f + 0.5f * std::sin(device->getTimer()->getTime() / 450.0f);
++	const float pulse = 0.5f + 0.5f * std::sin(device->getTimer()->getTime() / 350.0f);
 +	for(int p = 0; p < 2; ++p) {
-+		const auto& deck = matManager.getDeck()[p];
-+		const auto& grave = matManager.getGrave()[p];
-+		const float cx_deck = (deck[0].Pos.X + deck[1].Pos.X) / 2.0f;
-+		const float cy_deck = (deck[0].Pos.Y + deck[2].Pos.Y) / 2.0f;
-+		const float cy_grave = (grave[0].Pos.Y + grave[2].Pos.Y) / 2.0f;
-+		const float dir = (cx_deck > 4.0f) ? 1.0f : -1.0f;
-+		const float cx = cx_deck + dir * 1.0f;
-+		const float cy = (cy_deck + cy_grave) / 2.0f;
-+		const float hw = 0.30f, hh = 0.45f; //half size of the zone (a normal zone is 0.4 x 0.6)
++		float cx, cy;
++		GetPyramidZoneCenter(p, cx, cy);
++		const float hw = 0.18f, hh = 0.27f; //half size of the zone: small, so it always stays on the screen
 +		irr::core::vector2di pt[4];
 +		const float xs[4] = { cx - hw, cx + hw, cx - hw, cx + hw };
 +		const float ys[4] = { cy - hh, cy - hh, cy + hh, cy + hh };
@@ -122,6 +143,24 @@ index 918406c..3766718 100644
 +			std::swap(tl, tr);
 +		if(bl.X > br.X)
 +			std::swap(bl, br);
++		//safety: the whole zone and its glow must stay inside the game window, whatever the window size or view
++		{
++			const auto scr = driver->getScreenSize();
++			const int glowpx = static_cast<int>(std::max(8, (tr.X - tl.X)) * 0.45f) + 2;
++			const int minX = std::min(tl.X, bl.X) - glowpx, maxX = std::max(tr.X, br.X) + glowpx;
++			const int minY = std::min(tl.Y, tr.Y) - glowpx, maxY = std::max(bl.Y, br.Y) + glowpx;
++			int dx = 0, dy = 0;
++			if(maxX > static_cast<int>(scr.Width))
++				dx = static_cast<int>(scr.Width) - maxX;
++			else if(minX < 0)
++				dx = -minX;
++			if(maxY > static_cast<int>(scr.Height))
++				dy = static_cast<int>(scr.Height) - maxY;
++			else if(minY < 0)
++				dy = -minY;
++			const irr::core::vector2di shift(dx, dy);
++			tl += shift; tr += shift; bl += shift; br += shift;
++		}
 +		auto lerp = [](const irr::core::vector2di& a, const irr::core::vector2di& b, float t) {
 +			return irr::core::vector2di(static_cast<irr::s32>(a.X + (b.X - a.X) * t), static_cast<irr::s32>(a.Y + (b.Y - a.Y) * t));
 +		};
@@ -142,21 +181,26 @@ index 918406c..3766718 100644
 +							  std::max({ c1.X, c2.X, c3.X, c4.X }), std::max({ c1.Y, c2.Y, c3.Y, c4.Y }));
 +		btnPyZone[p]->setRelativePosition(rect);
 +		btnPyZone[p]->setVisible(true);
-+		//glow: three rings around the zone, pulsing slowly
-+		const auto glow = [&](int level, float expand) {
-+			const int base = (level == 0) ? 150 : (level == 1) ? 105 : 60;
-+			const int v = base + static_cast<int>(pulse * (level == 0 ? 105 : 70));
-+			const irr::video::SColor col(255, std::min(255, v), std::min(255, v * 3 / 4), static_cast<int>(v / 5));
++		//glow: a bright halo made of many rings around the zone, fading outwards, pulsing
++		const auto ring = [&](float expand, irr::video::SColor col) {
 +			const auto a = at(-expand, -expand), b = at(1.0f + expand, -expand), c = at(-expand, 1.0f + expand), d = at(1.0f + expand, 1.0f + expand);
 +			driver->draw2DLine(a, b, col);
 +			driver->draw2DLine(b, d, col);
 +			driver->draw2DLine(d, c, col);
 +			driver->draw2DLine(c, a, col);
 +		};
-+		glow(2, 0.16f);
-+		glow(1, 0.09f);
-+		fillquad(tl, tr, bl, br, irr::video::SColor(255, 30, 24, 60));
-+		glow(0, 0.03f);
++		const int rings = 14;
++		for(int i = rings; i >= 1; --i) {
++			const float f = static_cast<float>(i) / rings; //1 = far from the zone, 0 = next to the zone
++			const float strength = (1.0f - f) * (1.0f - f);
++			const int alpha = static_cast<int>(40.0f + strength * (150.0f + 65.0f * pulse));
++			ring(0.03f + f * 0.40f, irr::video::SColor(std::min(255, alpha), 255, 205, 40));
++		}
++		fillquad(tl, tr, bl, br, irr::video::SColor(255, 40, 30, 70));
++		//bright double border (white-yellow, pulsing)
++		const int bv = 215 + static_cast<int>(pulse * 40.0f);
++		ring(0.0f, irr::video::SColor(255, 255, bv, 120));
++		ring(0.025f, irr::video::SColor(255, 255, 225, 70));
 +		//pyramid symbol: 4 tiers of golden blocks (1, 2, 3, 4 blocks), like the layers window
 +		const irr::video::SColor block(255, 255, 214, 70), edge(255, 150, 100, 20);
 +		const float top = 0.10f, tier_h = 0.12f, gap = 0.012f, block_w = 0.17f;
@@ -225,7 +269,7 @@ index 918406c..3766718 100644
  void Game::DrawGUI() {
  	if(imageLoading.size()) {
  		for(auto mit = imageLoading.begin(); mit != imageLoading.end();) {
-@@ -869,6 +1025,7 @@ void Game::DrawGUI() {
+@@ -869,6 +1053,7 @@ void Game::DrawGUI() {
  	env->drawAll();
  }
  void Game::DrawSpec() {
@@ -233,7 +277,7 @@ index 918406c..3766718 100644
  	const auto drawrect2 = ResizeWin(574, 150, 574 + CARD_IMG_WIDTH, 150 + CARD_IMG_HEIGHT);
  	if(showcard) {
  		switch(showcard) {
-@@ -981,6 +1138,8 @@ void Game::DrawSpec() {
+@@ -981,6 +1166,8 @@ void Game::DrawSpec() {
  			irr::core::ustring lstr = L"";
  			if(1 <= showcardcode && showcardcode <= 14) {
  				lstr = gDataManager->GetSysString(1700 + showcardcode);
@@ -465,7 +509,7 @@ index 8af0208..f3d3537 100644
  		btnBP->setRelativePosition({ 195, 0, 245, 20 });
  		btnM2->setRelativePosition({ 260, 0, 310, 20 });
 diff --git a/gframe/game.h b/gframe/game.h
-index eab91f8..c2ad92b 100644
+index eab91f8..9f48b22 100644
 --- a/gframe/game.h
 +++ b/gframe/game.h
 @@ -478,6 +478,11 @@ struct game_field_elements {
@@ -480,11 +524,12 @@ index eab91f8..c2ad92b 100644
  	irr::gui::IGUIButton* btnM1;
  	irr::gui::IGUIButton* btnBP;
  	irr::gui::IGUIButton* btnM2;
-@@ -532,6 +537,10 @@ public:
+@@ -532,6 +537,11 @@ public:
  	void DrawStatus(ClientCard* pcard);
  	void DrawPendScale(ClientCard* pcard);
  	void DrawStackIndicator(epro::wstringview text, const Materials::QuadVertex v, bool opponent);
 +	int GetPyramidCount(int p); //BILEL&&YUGI
++	void GetPyramidZoneCenter(int p, float& cx, float& cy); //BILEL&&YUGI
 +	void DrawPyramidZones(); //BILEL&&YUGI
 +	void DrawPyramidWindow(); //BILEL&&YUGI
 +	void OpenPyramidWindow(int p); //BILEL&&YUGI
