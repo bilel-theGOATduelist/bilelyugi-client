@@ -63,7 +63,7 @@ index 74630b1..c29f55b 100644
  //Options
  #define DUEL_TEST_MODE         0x01
 diff --git a/gframe/drawing.cpp b/gframe/drawing.cpp
-index 918406c..690f873 100644
+index 918406c..84f3774 100644
 --- a/gframe/drawing.cpp
 +++ b/gframe/drawing.cpp
 @@ -1,3 +1,5 @@
@@ -95,7 +95,7 @@ index 918406c..690f873 100644
  			pcard->aniFrame = 0;
  			pcard->is_moving = false;
  			pcard->is_fading = false;
-@@ -370,7 +377,18 @@ void Game::DrawCard(ClientCard* pcard) {
+@@ -370,7 +377,27 @@ void Game::DrawCard(ClientCard* pcard) {
  	}
  	matManager.mCard.AmbientColor = 0xffffffff;
  	matManager.mCard.DiffuseColor = ((int)std::round(pcard->curAlpha) << 24) | 0xffffff;
@@ -110,12 +110,50 @@ index 918406c..690f873 100644
 +		irr::core::matrix4 scaleMat;
 +		scaleMat.setScale(irr::core::vector3df(scale, scale, scale));
 +		worldTransform *= scaleMat;
++		if(pcard->location == LOCATION_REMOVED) {
++			//deck -> py zone: the card first rises above the pile and then comes down into the zone (an arc),
++			//so it never looks as if it came out of the middle of the pile
++			float ax, ay, ahw, ahh, deckdist;
++			GetPyramidZoneCenter(pcard->controler, ax, ay, &ahw, &ahh, &deckdist);
++			const float s = (deckdist > 0.001f) ? std::max(0.0f, std::min(1.0f, 1.0f - d / deckdist)) : 1.0f;
++			const float lift = 0.7f * std::sin(irr::core::PI * s);
++			worldTransform.setTranslation(worldTransform.getTranslation() + irr::core::vector3df(0.0f, 0.0f, lift));
++		}
 +	}
 +	driver->setTransform(irr::video::ETS_WORLD, worldTransform);
  	auto m22 = pcard->mTransform(2, 2);
  	if(m22 > -0.99 || pcard->is_moving) {
  		matManager.mCard.setTexture(0, imageManager.GetTextureCard(pcard->code, imgType::ART));
-@@ -641,9 +659,10 @@ void Game::DrawMisc() {
+@@ -471,6 +498,10 @@ void Game::DrawMisc() {
+ 	matManager.mTexture.setTexture(0, imageManager.tAct);
+ 	driver->setMaterial(matManager.mTexture);
+ 
++	const auto PileZ = [](size_t n) { //BILEL&&YUGI: same pile height cap as the cards (60 cards)
++		const size_t low = (n < 60) ? n : 60;
++		return 0.01f * low + 0.0002f * (n - low) + 0.02f;
++	};
+ 	auto drawact = [this, &im](const Materials::QuadVertex vertex, float zval) {
+ 		im.setTranslation(irr::core::vector3df((vertex[0].Pos.X + vertex[1].Pos.X) / 2,
+ 			(vertex[0].Pos.Y + vertex[2].Pos.Y) / 2, zval));
+@@ -480,13 +511,13 @@ void Game::DrawMisc() {
+ 
+ 	for(int p = 0; p < 2; p++) {
+ 		if(dField.deck_act[p])
+-			drawact(matManager.getDeck()[p], dField.deck[p].size() * 0.01f + 0.02f);
++			drawact(matManager.getDeck()[p], PileZ(dField.deck[p].size()));
+ 		if(dField.grave_act[p])
+-			drawact(matManager.getGrave()[p], dField.grave[p].size() * 0.01f + 0.02f);
++			drawact(matManager.getGrave()[p], PileZ(dField.grave[p].size()));
+ 		if(dField.remove_act[p])
+-			drawact(matManager.getRemove()[p], dField.remove[p].size() * 0.01f + 0.02f);
++			drawact(matManager.getRemove()[p], PileZ(dField.remove[p].size()));
+ 		if(dField.extra_act[p])
+-			drawact(matManager.getExtra()[p], dField.extra[p].size() * 0.01f + 0.02f);
++			drawact(matManager.getExtra()[p], PileZ(dField.extra[p].size()));
+ 		if(dField.pzone_act[p])
+ 			drawact(matManager.getSzone()[p][dInfo.GetPzoneIndex(0)], 0.03f);
+ 	}
+@@ -641,9 +672,10 @@ void Game::DrawMisc() {
  			DrawStackIndicator(gDataManager->GetNumString(dField.deck[p].size()), matManager.getDeck()[p], (p == 1));
  		if (dField.grave[p].size())
  			DrawStackIndicator(gDataManager->GetNumString(dField.grave[p].size()), matManager.getGrave()[p], (p == 1));
@@ -128,7 +166,7 @@ index 918406c..690f873 100644
  }
  /*
  Draws the stats of a card based on its relative position
-@@ -760,6 +779,194 @@ void Game::DrawStackIndicator(epro::wstringview text, const Materials::QuadVerte
+@@ -760,6 +792,218 @@ void Game::DrawStackIndicator(epro::wstringview text, const Materials::QuadVerte
  	DrawShadowText(numFont, utext, irr::core::recti(coords.X - dim.Width, coords.Y - dim.Height, coords.X + dim.Width, coords.Y + dim.Height),
  				   Resize(0, 1, 0, 1), skin::DUELFIELD_STACK_VAL, 0xff000000);
  }
@@ -156,7 +194,7 @@ index 918406c..690f873 100644
 +//BILEL&&YUGI: 3D centre and half size of the py zone of player p (the centre is also the target of the card flight deck -> py zone).
 +//All sizes are relative to the Main Deck tile, so the zone looks the same in the perspective and in the topdown view:
 +//small, in the free column just outside the Graveyard/Main Deck column (clear of the raised deck pile), at the height between them.
-+void Game::GetPyramidZoneCenter(int p, float& cx, float& cy, float* hw, float* hh) {
++void Game::GetPyramidZoneCenter(int p, float& cx, float& cy, float* hw, float* hh, float* deckdist) {
 +	const auto& deck = matManager.getDeck()[p];
 +	const auto& grave = matManager.getGrave()[p];
 +	const float cx_deck = (deck[0].Pos.X + deck[1].Pos.X) / 2.0f;
@@ -167,6 +205,8 @@ index 918406c..690f873 100644
 +	const float dir = (cx_deck > 4.0f) ? 1.0f : -1.0f;
 +	cx = cx_deck + dir * deck_w * 1.2f;
 +	cy = (cy_deck + cy_grave) / 2.0f;
++	if(deckdist)
++		*deckdist = std::sqrt((cx - cx_deck) * (cx - cx_deck) + (cy - cy_deck) * (cy - cy_deck));
 +	if(hw)
 +		*hw = deck_w * 0.2f;
 +	if(hh)
@@ -174,8 +214,10 @@ index 918406c..690f873 100644
 +}
 +//BILEL&&YUGI: draws the py zone of each player (called at the end of DrawMisc, so windows are drawn above it)
 +void Game::DrawPyramidZones() {
-+	if(!dInfo.isInDuel || is_building || is_siding)
++	if(!dInfo.isInDuel || is_building || is_siding) {
++		pyClaiming[0] = pyClaiming[1] = false;
 +		return;
++	}
 +	auto* coll = device->getSceneManager()->getSceneCollisionManager();
 +	const float pulse = 0.5f + 0.5f * std::sin(device->getTimer()->getTime() / 350.0f);
 +	for(int p = 0; p < 2; ++p) {
@@ -268,6 +310,26 @@ index 918406c..690f873 100644
 +				driver->draw2DLine(at(u0, v1), at(u1, v1), edge);
 +			}
 +		}
++		//while a claim is running the number is hidden; it comes back (as 0) when every card has reached its destination
++		if(pyClaiming[p]) {
++			bool flying = false;
++			const auto check = [&flying](auto& cards) {
++				for(auto* c : cards) {
++					if(c && c->py_from && c->is_moving)
++						flying = true;
++				}
++			};
++			check(dField.hand[p]);
++			check(dField.grave[p]);
++			check(dField.deck[p]);
++			check(dField.extra[p]);
++			check(dField.mzone[p]);
++			check(dField.szone[p]);
++			if(GetPyramidCount(p) == 0 && !flying)
++				pyClaiming[p] = false;
++		}
++		if(pyClaiming[p])
++			continue;
 +		const auto tc = at(0.5f, 0.80f);
 +		const auto layerstr = epro::format(L"{}", PyramidLayers(GetPyramidCount(p)));
 +		const irr::core::ustring utext{ epro::wstringview(layerstr) };
@@ -323,7 +385,7 @@ index 918406c..690f873 100644
  void Game::DrawGUI() {
  	if(imageLoading.size()) {
  		for(auto mit = imageLoading.begin(); mit != imageLoading.end();) {
-@@ -869,6 +1076,7 @@ void Game::DrawGUI() {
+@@ -869,6 +1113,7 @@ void Game::DrawGUI() {
  	env->drawAll();
  }
  void Game::DrawSpec() {
@@ -331,7 +393,7 @@ index 918406c..690f873 100644
  	const auto drawrect2 = ResizeWin(574, 150, 574 + CARD_IMG_WIDTH, 150 + CARD_IMG_HEIGHT);
  	if(showcard) {
  		switch(showcard) {
-@@ -981,6 +1189,8 @@ void Game::DrawSpec() {
+@@ -981,6 +1226,8 @@ void Game::DrawSpec() {
  			irr::core::ustring lstr = L"";
  			if(1 <= showcardcode && showcardcode <= 14) {
  				lstr = gDataManager->GetSysString(1700 + showcardcode);
@@ -341,7 +403,7 @@ index 918406c..690f873 100644
  			auto pos = lpcFont->getDimensionustring(lstr);
  			if(showcardp < 10.0f) {
 diff --git a/gframe/duelclient.cpp b/gframe/duelclient.cpp
-index d8c2414..59197ff 100644
+index d8c2414..443ee96 100644
 --- a/gframe/duelclient.cpp
 +++ b/gframe/duelclient.cpp
 @@ -961,6 +961,8 @@ void DuelClient::HandleSTOCPacketLanAsync(const std::vector<uint8_t>& data) {
@@ -383,15 +445,17 @@ index d8c2414..59197ff 100644
  		case PHASE_STANDBY:
  			event_string = gDataManager->GetSysString(21).data();
  			mainGame->btnSP->setVisible(true);
-@@ -3095,6 +3106,7 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
+@@ -3095,6 +3106,9 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
  		} else {
  			if (!(previous.location & LOCATION_OVERLAY) && !(current.location & LOCATION_OVERLAY)) {
  				ClientCard* pcard = mainGame->dField.GetCard(previous.controler, previous.location, previous.sequence);
 +				pcard->py_from = pcard->IsPyramidHidden(); //BILEL&&YUGI: leaving the py zone
++				if(pcard->py_from && previous.controler <= 1)
++					mainGame->pyClaiming[previous.controler] = true;
  				if (pcard->code != code && (code != 0 || current.location == LOCATION_EXTRA))
  					pcard->SetCode(code);
  				pcard->cHint = 0;
-@@ -3133,16 +3145,19 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
+@@ -3133,16 +3147,19 @@ int DuelClient::ClientAnalyze(const uint8_t* msg, uint32_t len) {
  								mainGame->dField.MoveCard(ocard, 10);
  							mainGame->WaitFrameSignal(10, lock);
  						}
@@ -513,7 +577,7 @@ index fcfaec0..39656e3 100644
  	case LOCATION_EXTRA:
  		loc_id = 1006;
 diff --git a/gframe/game.cpp b/gframe/game.cpp
-index 8af0208..3e1087b 100644
+index 8af0208..e29ae27 100644
 --- a/gframe/game.cpp
 +++ b/gframe/game.cpp
 @@ -323,6 +323,11 @@ void Game::Initialize() {
@@ -528,7 +592,7 @@ index 8af0208..3e1087b 100644
  	btnM1 = AlignElementWithParent(env->addButton(Scale(160, 0, 210, 20), wPhase, -1, L"\xff2d\xff11"));
  	btnM1->setEnabled(false);
  	btnM1->setPressed(true);
-@@ -442,6 +447,18 @@ void Game::Initialize() {
+@@ -442,6 +447,19 @@ void Game::Initialize() {
  	btnPSDD->setImage(imageManager.tCover[0]);
  	//card select
  	imgsize = { Scale<irr::s32>(CARD_IMG_WIDTH * 0.6f), Scale<irr::s32>(CARD_IMG_HEIGHT * 0.6f) };
@@ -540,6 +604,7 @@ index 8af0208..3e1087b 100644
 +	}
 +	pyramidView = 0;
 +	pyFlashTime[0] = pyFlashTime[1] = 0;
++	pyClaiming[0] = pyClaiming[1] = false;
 +	wPyramid = env->addWindow(Scale(340, 60, 1000, 580), false, L"Pyramid");
 +	wPyramid->getCloseButton()->setVisible(false);
 +	wPyramid->setVisible(false);
@@ -547,7 +612,7 @@ index 8af0208..3e1087b 100644
  	wCardSelect = env->addWindow(Scale(320, 100, 1000, 400), false, L"");
  	wCardSelect->getCloseButton()->setVisible(false);
  	wCardSelect->setVisible(false);
-@@ -3277,6 +3294,7 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -3277,6 +3295,7 @@ void Game::SetPhaseButtons(bool visibility) {
  	if(visibility) {
  		btnDP->setVisible(gGameConfig->alternative_phase_layout || btnDP->isSubElement());
  		btnSP->setVisible(gGameConfig->alternative_phase_layout || btnSP->isSubElement());
@@ -555,7 +620,7 @@ index 8af0208..3e1087b 100644
  		btnM1->setVisible(gGameConfig->alternative_phase_layout || btnM1->isSubElement());
  		btnM2->setVisible(gGameConfig->alternative_phase_layout || btnM2->isSubElement());
  		btnBP->setVisible(gGameConfig->alternative_phase_layout || btnBP->isSubElement());
-@@ -3295,6 +3313,7 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -3295,6 +3314,7 @@ void Game::SetPhaseButtons(bool visibility) {
  	auto UpdatePhaseButtons = [&] {
  		if(gGameConfig->alternative_phase_layout) {
  			btnDP->setRelativePosition({ 0, 0, 50, 20 });
@@ -563,7 +628,7 @@ index 8af0208..3e1087b 100644
  			btnSP->setRelativePosition({ 0, 40, 50, 60 });
  			btnM1->setRelativePosition({ 0, 80, 50, 100 });
  			btnBP->setRelativePosition({ 0, 120, 50, 140 });
-@@ -3309,6 +3328,7 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -3309,6 +3329,7 @@ void Game::SetPhaseButtons(bool visibility) {
  				btnShuffle->setRelativePosition({ 0, 40, 50, 60 });
  				btnDP->setRelativePosition({ 0, 40, 50, 60 });
  				btnSP->setRelativePosition({ 0, 40, 50, 60 });
@@ -571,7 +636,7 @@ index 8af0208..3e1087b 100644
  				btnM1->setRelativePosition({ 160, 20, 210, 40 });
  				btnBP->setRelativePosition({ 160, 20, 210, 40 });
  				btnM2->setRelativePosition({ 160, 20, 210, 40 });
-@@ -3318,6 +3338,7 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -3318,6 +3339,7 @@ void Game::SetPhaseButtons(bool visibility) {
  			btnShuffle->setRelativePosition({ 65, 0, 115, 20 });
  			btnDP->setRelativePosition({ 65, 0, 115, 20 });
  			btnSP->setRelativePosition({ 65, 0, 115, 20 });
@@ -579,7 +644,7 @@ index 8af0208..3e1087b 100644
  			btnM1->setRelativePosition({ 130, 0, 180, 20 });
  			btnBP->setRelativePosition({ 195, 0, 245, 20 });
  			btnM2->setRelativePosition({ 195, 0, 245, 20 });
-@@ -3329,12 +3350,14 @@ void Game::SetPhaseButtons(bool visibility) {
+@@ -3329,12 +3351,14 @@ void Game::SetPhaseButtons(bool visibility) {
  		btnShuffle->setRelativePosition({ 0, 0, 50, 20 });
  		if(dInfo.HasFieldFlag(DUEL_EMZONE)) {
  			btnSP->setRelativePosition({ 0, 0, 50, 20 });
@@ -595,10 +660,10 @@ index 8af0208..3e1087b 100644
  		btnBP->setRelativePosition({ 195, 0, 245, 20 });
  		btnM2->setRelativePosition({ 260, 0, 310, 20 });
 diff --git a/gframe/game.h b/gframe/game.h
-index eab91f8..71bffe9 100644
+index eab91f8..494bf87 100644
 --- a/gframe/game.h
 +++ b/gframe/game.h
-@@ -478,6 +478,12 @@ struct game_field_elements {
+@@ -478,6 +478,13 @@ struct game_field_elements {
  	irr::gui::IGUIStaticText* wPhase;
  	irr::gui::IGUIButton* btnDP;
  	irr::gui::IGUIButton* btnSP;
@@ -607,16 +672,17 @@ index eab91f8..71bffe9 100644
 +	irr::gui::IGUIWindow* wPyramid; //BILEL&&YUGI: window showing the Pyramid layers
 +	irr::gui::IGUIButton* btnPyClose;
 +	int pyramidView; //BILEL&&YUGI: player whose Pyramid is shown in wPyramid
++	bool pyClaiming[2]; //BILEL&&YUGI: a claim is running: the layer counter of the py zone is hidden until every card is in the hand
 +	irr::u32 pyFlashTime[2]; //BILEL&&YUGI: time of the last card arrival in each py zone (0 = none), used for the flash
  	irr::gui::IGUIButton* btnM1;
  	irr::gui::IGUIButton* btnBP;
  	irr::gui::IGUIButton* btnM2;
-@@ -532,6 +538,11 @@ public:
+@@ -532,6 +539,11 @@ public:
  	void DrawStatus(ClientCard* pcard);
  	void DrawPendScale(ClientCard* pcard);
  	void DrawStackIndicator(epro::wstringview text, const Materials::QuadVertex v, bool opponent);
 +	int GetPyramidCount(int p); //BILEL&&YUGI
-+	void GetPyramidZoneCenter(int p, float& cx, float& cy, float* hw = nullptr, float* hh = nullptr); //BILEL&&YUGI
++	void GetPyramidZoneCenter(int p, float& cx, float& cy, float* hw = nullptr, float* hh = nullptr, float* deckdist = nullptr); //BILEL&&YUGI
 +	void DrawPyramidZones(); //BILEL&&YUGI
 +	void DrawPyramidWindow(); //BILEL&&YUGI
 +	void OpenPyramidWindow(int p); //BILEL&&YUGI
